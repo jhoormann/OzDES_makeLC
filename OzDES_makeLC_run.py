@@ -138,7 +138,6 @@ for source in sourceStats:
     # and splice locations in the findRes function.  If you want to use any other emission lines besides Hbeta, MgII,
     # and CIV you will need to add the R-L relationships
     if calcWidth == True:
-        wave = wavelength/(1+z)
         ozcalc.calcWidth(wavelength, lineName, lineLoc, availLines, lineInt, lumLoc, contWinMin, contWinMax,
                          contWinBSMin, contWinBSMax, origFluxes, origVariances, origFluxCoadd, origVarCoadd, z,
                          strapNum, scale, outLoc, source, makeFig, calcBH)
