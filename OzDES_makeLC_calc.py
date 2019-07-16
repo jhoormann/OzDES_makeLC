@@ -21,6 +21,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from scipy.interpolate import interp1d
+from scipy.integrate import fixed_quad
 
 
 # -------------------------------------------------- #
@@ -33,7 +34,6 @@ from scipy.interpolate import interp1d
 # in the format provided by OzDES_calibSpec after    #
 # coadding.                                          #
 # -------------------------------------------------- #
-
 class SpectrumCoadd(object):
     # Spectrum class for latest version of the OzDES pipeline
 
@@ -193,6 +193,8 @@ def plot_ticks(ax, size):
 def plot_share_x(number, title, xlabel, ylabel, xlim=(0, 0), ylim=(0, 0), asize=22, tsize=22, xdim=10,
                  ydim=10, xtick=5, ytick=5):
     fig, ax_array = plt.subplots(number, sharex=True)
+    if number == 1:
+        ax_array = [ax_array]
     fig = plt.gcf()
     fig.set_size_inches(xdim, ydim, forward=True)
     fig.subplots_adjust(hspace=0)
@@ -222,13 +224,15 @@ def plot_share_x(number, title, xlabel, ylabel, xlim=(0, 0), ylim=(0, 0), asize=
 
     return fig, ax_array
 
+
 # -------------------------------------------------- #
-# ------------------- photoLC -----------------------#
+# ---------------- convertPhotoLC -------------------#
 # -------------------------------------------------- #
-# Define figure and axis variables for plot which    #
-# shares the x axis for a specified number of plots. #
+# Converts photometric light curves from magnitudes  #
+# to flux and saves the light curves separately for  #
+# each band.                                         #
 # -------------------------------------------------- #
-def photoLC(photoName, source, bandName, bandPivot, scale, makeFig, outLoc):
+def convertPhotoLC(photoName, source, bandName, bandPivot, scale, makeFig, outLoc):
     # Read in the photometric data
     photo = pd.read_table(photoName, delim_whitespace=True)
 
@@ -396,6 +400,57 @@ def cont_fit_reject(wavelength, fluxes, variances, minWin, maxWin):
 
 
 # -------------------------------------------------- #
+# The next three functions are modified from code    #
+# provided by Dale Mudd                              #
+# -------------------------------------------------- #
+# ------------------ filterCurve ------------------- #
+# -------------------------------------------------- #
+# creates a class to hold the transmission function  #
+# for each band.                                     #
+# -------------------------------------------------- #
+class filterCurve:
+    """A filter"""
+
+    def __init__(self):
+        self.wave = np.array([], 'float')
+        self.trans = np.array([], 'float')
+        return
+
+    def read(self, file):
+        # DES filter curves express the wavelengths in nms
+        if 'DES' in file:
+            factor = 10.
+        else:
+            factor = 1.
+        file = open(file, 'r')
+        for line in file.readlines():
+            if line[0] != '#':
+                entries = line.split()
+                self.wave = np.append(self.wave, float(entries[0]))
+                self.trans = np.append(self.trans, float(entries[1]))
+        file.close()
+        # We use Angstroms for the wavelength in the filter transmission file
+        self.wave = self.wave * factor
+        return
+
+
+# -------------------------------------------------- #
+# ---------------- readFilterCurve ----------------- #
+# -------------------------------------------------- #
+# Reads in the filter curves and stores it as the    #
+# filter curve class.                                #
+# -------------------------------------------------- #
+def readFilterCurves(bands, filters):
+
+    filterCurves = {}
+    for f in bands:
+        filterCurves[f] = filterCurve()
+        filterCurves[f].read(filters[f])
+
+    return filterCurves
+
+
+# -------------------------------------------------- #
 # ----------------- computeABmag ------------------- #
 # -------------------------------------------------- #
 # computes the AB magnitude for given transmission   #
@@ -449,6 +504,7 @@ def computeABmag(trans_flux, trans_wave, tmp_wave, tmp_flux, tmp_var):
 
     return magAB, magABvar
 
+
 # --------------------------------------------------- #
 # --------------- uncertainty_cont ------------------ #
 # --------------------------------------------------- #
@@ -471,7 +527,7 @@ def computeABmag(trans_flux, trans_wave, tmp_wave, tmp_flux, tmp_var):
 # is then the associated error.                       #
 # --------------------------------------------------- #
 def uncertainty_cont(wavelength, flux, variance, strapNum, z, line, pivotLC, winLimMin, winLimMax, winsize, scale,
-                     calc='cont', flag='mean'):
+                     calc='cont', flag='mean', res=0):
 
     # calc = cont -> continuum subtraction
     # calc = win -> integration window
@@ -507,7 +563,6 @@ def uncertainty_cont(wavelength, flux, variance, strapNum, z, line, pivotLC, win
         winLimMax[0] = (winLimMax[1] / (1 + z) - highW) * (1 + z)
     if winLimMax[0] < wavelength[line[1]]:
         winLimMax[0] = wavelength[line[1]]
-
 
     # Wavelengths to choose in each window in steps of 0.5A
     winMinVect = np.arange(winLimMin[0], winLimMin[1] - (winsize - 0.5) * (1 + z), 0.5 * (1 + z))
@@ -579,7 +634,7 @@ def uncertainty_cont(wavelength, flux, variance, strapNum, z, line, pivotLC, win
                 # first calculate the RMS spectrum if requested
                 fluxC, varC = rmsSpec(fluxC, varC)
 
-            vals[i] = fwhm(wavelength[lineMin:lineMax], fluxC[lineMin:lineMax])
+            vals[i] = fwhm(wavelength[lineMin:lineMax], fluxC[lineMin:lineMax], res)
 
         if calc == "sigma":
             # Determine uncertainty in velocity dispersion measurement
@@ -591,7 +646,7 @@ def uncertainty_cont(wavelength, flux, variance, strapNum, z, line, pivotLC, win
             if flag == 'rms':
                 # first calculate the RMS spectrum if requested
                 fluxC, varC = rmsSpec(fluxC, varC)
-            vals[i] = lineVar(wavelength[lineMin:lineMax], fluxC[lineMin:lineMax])
+            vals[i] = lineVar(wavelength[lineMin:lineMax], fluxC[lineMin:lineMax], res)
 
     stddev_bs = np.nanstd(vals)
     return stddev_bs
@@ -605,7 +660,9 @@ def uncertainty_cont(wavelength, flux, variance, strapNum, z, line, pivotLC, win
 # the entire provided wavelength window so just       #
 # include the relevant region of the spectrum.        #
 # --------------------------------------------------- #
-def fwhm(wave, flux, plot=False):
+def fwhm(wave, flux, res):
+    # First I am smoothing the spectrum
+    exponential_smooth(flux)
 
     # Find the half maximum
     peak = max(flux)
@@ -644,22 +701,16 @@ def fwhm(wave, flux, plot=False):
 
     right = (rightUp + rightDown)/2
 
-    if plot == True:
-        fig, ax = makeFigSingle("", "Wavelength", "Flux", [wave[0], wave[-1]])
-        ax.plot(wave, flux, color='black', alpha=0.5)
-        ax.plot([0, 10000], [hm, hm], color='black')
-        ax.axvline(x=peakLoc, color='red')
-        ax.axvline(x=left, color='blue')
-        ax.axvline(x=right, color='blue')
-        plt.show()
-
     # Now calculate the velocity
 
     # km/s
     c = 299792.458
 
-    zLeft = (left-peakLoc)/peakLoc
-    zRight = (right-peakLoc)/peakLoc
+    widthObs = (right-left)
+    widthT = pow(widthObs**2 - res**2,0.5)/2
+
+    zLeft = -widthT/peakLoc
+    zRight = widthT/peakLoc
 
     zComb = (1+zRight)/(1+zLeft)-1
 
@@ -676,7 +727,7 @@ def fwhm(wave, flux, plot=False):
 # over the entire provided wavelength window so just  #
 # include the relevant region of the spectrum.        #
 # --------------------------------------------------- #
-def lineVar(wave, flux):
+def lineVar(wave, flux, res):
     length = len(wave)
 
     peak = max(flux)
@@ -708,16 +759,18 @@ def lineVar(wave, flux):
 
     c = 299792.458
 
-    left = peakLoc - sigma / 2
-    right = peakLoc + sigma / 2
+    sigmaT = pow(sigma**2 - res**2, 0.5)
+
+    left = peakLoc - sigmaT / 2
+    right = peakLoc + sigmaT / 2
 
     zLeft = (left - peakLoc) / peakLoc
     zRight = (right - peakLoc) / peakLoc
 
-    # redshift from lambda_l to lambda_r
+
+    #redshift from lambda_l to lambda_r
     zComb = (1 + zRight) / (1 + zLeft) - 1
 
-    # convert to velocity
     vel = c * ((1 + zComb) ** 2 - 1) / ((1 + zComb) ** 2 + 1)
 
     return vel
@@ -817,7 +870,12 @@ def rmsSpec(flux, variance):
 # that is present in the spectrum.                   #
 # -------------------------------------------------- #
 def lineLC(dates, lineName, availLines, lineInt, contWinMin, contWinMax, contWinBSMin, contWinBSMax, wavelength,
-           origFluxes, origVariances, numEpochs, scale, z, strapNum, outLoc, source, makeFig, makeFigEpoch):
+           origFluxes, origVariances, fluxCoadd, numEpochs, scale, z, strapNum, outLoc, source, makeFig, makeFigEpoch):
+
+    if makeFig == True:
+        # Define figure and axis for light curves of all available emission lines
+        lineAxis = [lineName[i] for i in range(len(lineName)) if availLines[i] == True]
+        fig_spec, ax_spec = plot_share_x(len(lineAxis), source, "Date (MJD)", lineAxis)
 
     for l in range(len(lineName)):
         if availLines[l] == True:
@@ -865,12 +923,48 @@ def lineLC(dates, lineName, availLines, lineInt, contWinMin, contWinMax, contWin
                                                       strapNum, z, [lineMin, lineMax], pivotLC, contMinBS,
                                                       contMaxBS, contMin[1] - contMin[0], scale)
 
+                if makeFigEpoch == True:
+                    # Save figures showing spectrum before/after continuum subtraction for each epoch and line
+                    fig_epoch, ax_epoch = plot_share_x(2, source + " epoch " + str(epoch), "Wavelength ($\AA$)",
+                                                       ["Before", " After"], [wavelength[0], wavelength[-1]])
+                    for p in range(2):
+                        ax_epoch[p].axvspan(contMinBS[0], contMinBS[1], color='mediumblue', alpha=0.3)
+                        ax_epoch[p].axvspan(contMaxBS[0], contMaxBS[1], color='mediumblue', alpha=0.3)
+                        ax_epoch[p].axvspan(contMin[0], contMin[1], color='mediumblue', alpha=0.5)
+                        ax_epoch[p].axvspan(contMax[0], contMax[1], color='mediumblue', alpha=0.5)
+                        ax_epoch[p].axvspan(wavelength[lineMin], wavelength[lineMax], color='forestgreen', alpha=0.3)
+                    ax_epoch[0].plot(wavelength, origFluxes[:, epoch], color='black')
+                    ax_epoch[1].plot(wavelength, fluxes[:, epoch], color='black')
+                    fig_epoch.savefig(outLoc + source + "_" + lineName[l] + "_epoch_" + str(epoch) + ".png")
+                    plt.close(fig_epoch)
+
             # Scale the line fluxes as with the photometry
             lc_flux = lc_flux / scale
             total_error = total_error / scale
 
             # Save the data as a light curve with filename outLoc + source + _ + line + .txt
             outputLC(dates, lc_flux, total_error, line, outLoc, source)
+
+            if makeFig == True:
+                # plot the light curve on the subplot defined above.
+                ax_spec[l].errorbar(dates, lc_flux, yerr=total_error, fmt='o', color='black')
+
+                # make a plot to show the continuum subtraction regions on the coadded spectrum
+                fig_coadd, ax_coadd = plot_share_x(1, source, "Wavelength ($\AA$)", ["Total Coadded Flux (" + str(scale)
+                                                                                     + " erg/s/cm$^2$/$\AA$)"],
+                                                   [wavelength[0], wavelength[-1]])
+                ax_coadd[0].axvspan(contMinBS[0], contMinBS[1], color='mediumblue', alpha=0.3)
+                ax_coadd[0].axvspan(contMaxBS[0], contMaxBS[1], color='mediumblue', alpha=0.3)
+                ax_coadd[0].axvspan(contMin[0], contMin[1], color='mediumblue', alpha=0.5)
+                ax_coadd[0].axvspan(contMax[0], contMax[1], color='mediumblue', alpha=0.5)
+                ax_coadd[0].axvspan(wavelength[lineMin], wavelength[lineMax], color='forestgreen', alpha=0.3)
+                ax_coadd[0].plot(wavelength, fluxCoadd, color='black')
+                fig_coadd.savefig(outLoc + source + "_" + lineName[l] + "_coadd.png")
+                plt.close(fig_coadd)
+
+    # Once all the light curves are plotted save the figure as outLoc + source + "_spec.png"
+    if makeFig == True:
+        fig_spec.savefig(outLoc + source + "_spec.png")
 
     return
 
@@ -883,6 +977,8 @@ def lineLC(dates, lineName, availLines, lineInt, contWinMin, contWinMax, contWin
 # labels.                                            #
 # -------------------------------------------------- #
 font = {'size': '20', 'color': 'black', 'weight': 'normal'}
+
+
 def makeFigSingle(title, xlabel, ylabel, xlim=[0, 0], ylim=[0, 0]):
     fig = plt.gcf()
     fig.set_size_inches(10, 10, forward=True)
@@ -903,3 +999,394 @@ def makeFigSingle(title, xlabel, ylabel, xlim=[0, 0], ylim=[0, 0]):
 
     return fig, ax
 
+
+# -------------------------------------------------- #
+# ------------------ makePhotoLC --------------------#
+# -------------------------------------------------- #
+# Makes light curves by applying photometric filters #
+# to a series of spectral data.  The data is saved   #
+# as fluxes.                                         #
+# -------------------------------------------------- #
+def makePhotoLC(dates, bandName, bandPivot, filters, wavelength, origFluxes, origVariances, numEpochs, scale, outLoc,
+                source, makeFig):
+
+    filterCurves = readFilterCurves(bandName, filters)
+
+    if makeFig == True:
+        # Define figure and axis for light curves of all available emission lines
+        fig_phot, ax_phot = plot_share_x(len(bandName), source, "Date (MJD)", bandName)
+
+    for b in range(len(bandName)):
+        mags = np.zeros(numEpochs)
+        mags_var = np.zeros(numEpochs)
+        flux = np.zeros(numEpochs)
+        flux_err = np.zeros(numEpochs)
+
+        for e in range(numEpochs):
+            # Calculate the magntiude given the transmission function provided
+            mags[e], mags_var[e] = computeABmag(filterCurves[bandName[b]].trans, filterCurves[bandName[b]].wave,
+                                                wavelength, origFluxes[:, e] * scale,
+                                                origVariances[:, e] * pow(scale, 2))
+            # Then convert to fluxes
+            flux[e], flux_err[e] = magToFlux(mags[e], mags_var[e] ** 0.5, bandPivot[b])
+
+        # Scale the  fluxes
+        flux = flux / scale
+        flux_err = flux_err / scale
+
+        # Save the data as a light curve with filename outLoc + source + _ + calc_bandName + .txt
+        outputLC(dates, flux, flux_err, 'calc_' + bandName[b], outLoc, source)
+
+        if makeFig == True:
+            # plot the light curve on the subplot defined above.
+            ax_phot[b].errorbar(dates, flux, yerr=flux_err, fmt='o', color='black')
+
+    # Once all the light curves are plotted save the figure as outLoc + source + "_makePhot.png"
+    if makeFig == True:
+        fig_phot.savefig(outLoc + source + "_makePhot.png")
+
+    return
+
+
+# -------------------------------------------------- #
+# ------------------- calcWidth ---------------------#
+# -------------------------------------------------- #
+# Calculates emission line width (FWHM and velocity  #
+# dispersion) using the mean and RMS spectra.  If    #
+# possible calculates the BH mass using the R-L      #
+# relationship.  The data is saved to a text file.   #
+# -------------------------------------------------- #
+def calcWidth(wavelength, lineName, lineLoc, availLines, lineInt, lumLoc, contWinMin, contWinMax, contWinBSMin,
+              contWinBSMax, origFluxes, origVariances, origFluxCoadd, origVarCoadd, z, strapNum, scale, outLoc, source,
+              makeFig, calcBH):
+
+    # open a file to save the data to - outLoc + source + _vel.txt
+    out = open(outLoc + source + "_vel_and_mass.txt", 'w')
+
+    # Type (Mean/RMS), Measure (FWHM, Vel Disp)
+    out.write("Line Type Measure Vel Vel_Err Mass Lag Lag_Err_Min Lag_Err_Max Mass_Err_Min, Mass_Err_Max\n")
+
+    # Convert wavelength vector to rest frame
+    wave = wavelength/(1+z)
+    for l in range(len(lineName)):
+        if availLines[l] == True:
+            line = lineName[l]
+
+            # If calcBH == True estimate BH mass from the R-L relationship.  Here I will calculate the lag.  If you want
+            # to use the measured lag feed that in here.  If the luminosity needed isn't in the spectroscopic window
+            # I will just give nan for the black hole mass.  The luminosity is determined from the coadded flux
+
+            if calcBH == True:
+                lum, lumerr = luminosity(wavelength, origFluxCoadd, origVarCoadd, z, lumLoc[l]*(1+z), strapNum, scale)
+                if np.isnan(lum) == True:
+                    lag = np.nan
+                    lag_err_min = np.nan
+                    lag_err_max = np.nan
+                elif line == 'CIV':
+                    lag, lag_err_max, lag_err_min = RL_CIV(lum, lumerr)
+                elif line == 'MgII':
+                    lag, lag_err_max, lag_err_min = RL_MgII(lum, lumerr)
+                elif line == 'Hbeta':
+                    lag, lag_err_max, lag_err_min = RL_Hbeta(lum, lumerr)
+            else:
+                lag = np.nan
+                lag_err_min = np.nan
+                lag_err_max = np.nan
+
+            # Calculate the resolution of the spectrograph at the specified wavelength
+            res = findRes(lineLoc[l], z)
+
+            # define some variables for line/continuum windows in rest frame
+            contMin = np.array(contWinMin[line])
+            contMax = np.array(contWinMax[line])
+            contMinBS = np.array(contWinBSMin[line])
+            contMaxBS = np.array(contWinBSMax[line])
+
+            # similar for the line integration window but I want the wavelength bin number, not just the wavelength
+            lineMin = findBin(lineInt[line][0], wave)
+            lineMax = findBin(lineInt[line][1], wave)
+
+            fluxes = np.copy(origFluxes)
+            variances = np.copy(origVariances)
+
+            fluxCoadd = np.copy(origFluxCoadd)
+            varCoadd = np.copy(origVarCoadd)
+
+            # Perform the continuum subtraction on epochs and coadd
+            cont_fit_reject(wave, fluxes, variances, contMin, contMax)
+            cont_fit_reject(wave, fluxCoadd, varCoadd, contMin, contMax)
+
+            # First look at the mean spectrum, let's smooth it
+            # FWHM
+            vel_mean_fwhm = fwhm(wave[lineMin:lineMax], fluxCoadd[lineMin:lineMax], res)
+            err_mean_fwhm = uncertainty_cont(wave, origFluxCoadd, origVarCoadd, strapNum, 0, [lineMin, lineMax], 0,
+                                             contMinBS, contMaxBS, contMin[1] - contMin[0], scale, calc='fwhm',
+                                             flag='mean', res=res)
+
+
+            # Sigma
+            vel_mean_sigma = lineVar(wave[lineMin:lineMax], fluxCoadd[lineMin:lineMax], res)
+            err_mean_sigma = uncertainty_cont(wave, origFluxCoadd, origVarCoadd, strapNum, 0, [lineMin, lineMax], 0,
+                                              contMinBS, contMaxBS, contMin[1] - contMin[0], scale, calc='sigma',
+                                              flag='mean', res=res)
+
+            # Now look at the RMS spectrum
+            rms, rms_var = rmsSpec(fluxes, variances)
+            vel_rms_fwhm = fwhm(wave[lineMin:lineMax], rms[lineMin:lineMax], res)
+            err_rms_fwhm = uncertainty_cont(wave, origFluxes, origVariances, strapNum, 0, [lineMin, lineMax], 0,
+                                            contMinBS, contMaxBS, contMin[1] - contMin[0], scale, calc='fwhm',
+                                            flag='rms', res=res)
+
+            # Sigma
+            vel_rms_sigma = fwhm(wave[lineMin:lineMax], rms[lineMin:lineMax], res)
+            err_rms_sigma = uncertainty_cont(wave, origFluxes, origVariances, strapNum, 0, [lineMin, lineMax], 0,
+                                             contMinBS, contMaxBS, contMin[1] - contMin[0], scale, calc='sigma',
+                                             flag='rms', res=res)
+
+            if calcBH == True and np.isnan(lag) == False:
+                # Calculate BH mass for all 4 line measurements
+                mass_mean_fwhm, mass_min_mean_fwhm, mass_max_mean_fwhm = \
+                    blackHoleMass(lag, lag_err_min, lag_err_max, vel_mean_fwhm, err_mean_fwhm)
+                mass_mean_sigma, mass_min_mean_sigma, mass_max_mean_sigma = \
+                    blackHoleMass(lag, lag_err_min, lag_err_max, vel_mean_sigma, err_mean_sigma)
+
+                mass_rms_fwhm, mass_min_rms_fwhm, mass_max_rms_fwhm = \
+                    blackHoleMass(lag, lag_err_min, lag_err_max, vel_rms_fwhm, err_rms_fwhm)
+                mass_rms_sigma, mass_min_rms_sigma, mass_max_rms_sigma = \
+                    blackHoleMass(lag, lag_err_min, lag_err_max, vel_rms_sigma, err_rms_sigma)
+            else:
+                mass_mean_fwhm, mass_min_mean_fwhm, mass_max_mean_fwhm = np.nan, np.nan, np.nan
+                mass_mean_sigma, mass_min_mean_sigma, mass_max_mean_sigma = np.nan, np.nan, np.nan
+
+                mass_rms_fwhm, mass_min_rms_fwhm, mass_max_rms_fwhm = np.nan, np.nan, np.nan
+                mass_rms_sigma, mass_min_rms_sigma, mass_max_rms_sigma = np.nan, np.nan, np.nan
+
+            out.write(line + " MEAN FWHM %d %d %d %d %d %2.2f %2.2f %2.2f \n" %(vel_mean_fwhm, err_mean_fwhm, lag,
+                                                                                lag_err_min, lag_err_max,
+                                                                                mass_mean_fwhm, mass_min_mean_fwhm,
+                                                                                mass_max_mean_fwhm))
+            out.write(line + " MEAN Sigma %d %d %d %d %d %2.2f %2.2f %2.2f \n" %(vel_mean_sigma, err_mean_sigma, lag,
+                                                                                 lag_err_min, lag_err_max,
+                                                                                 mass_mean_sigma, mass_min_mean_sigma,
+                                                                                 mass_max_mean_sigma))
+            out.write(line + " RMS FWHM %d %d %d %d %d %2.2f %2.2f %2.2f \n" %(vel_rms_fwhm, err_rms_fwhm, lag,
+                                                                               lag_err_min, lag_err_max, mass_rms_fwhm,
+                                                                               mass_min_rms_fwhm, mass_max_rms_fwhm))
+            out.write(line + " RMS Sigma %d %d %d %d %d %2.2f %2.2f %2.2f \n" %(vel_rms_sigma, err_rms_sigma,
+                                                                                lag,lag_err_min, lag_err_max,
+                                                                                mass_rms_sigma, mass_min_rms_sigma,
+                                                                                mass_max_rms_sigma))
+
+            if makeFig == True:
+                # Define figure and axis for mean and rms spectrum
+                fig_width, ax_width = plot_share_x(2, source, "Wavelength ($\AA$)", ["Mean Flux", "RMS Flux"],
+                                                   [contMin[1], contMax[0]])
+                ax_width[0].plot(wave, fluxCoadd, color='black')
+                ax_width[0].axvline(wave[lineMin], color='forestgreen')
+                ax_width[0].axvline(wave[lineMax], color='forestgreen')
+                ax_width[1].plot(wave, rms, color='black')
+                ax_width[1].axvline(wave[lineMin], color='forestgreen')
+                ax_width[1].axvline(wave[lineMax], color='forestgreen')
+                fig_width.savefig(outLoc + source + "_" + line + "_width.png")
+                plt.close(fig_width)
+
+    out.close()
+
+    return
+
+
+# -------------------------------------------------- #
+# -------------------- findRes ----------------------#
+# -------------------------------------------------- #
+# The line width measurements are dependent on the   #
+# resolution of the spectrograph.  The OzDES spectra #
+# are made up of two arms of AAOmega with different  #
+# resolutions.  This function will find the          #
+# resolution at the emission line in question.  You  #
+# will need to modify this if you are using a        #
+# different spectrograph.  Input rest frame emission #
+# line wavelength and convert.                       #
+# -------------------------------------------------- #
+def findRes(line, z):
+    #Use OzDES data - splice 5700 and resolution for red/blue arms
+    splice = 5700
+    resO = [1600, 1490]  #blue/red arm of spectrograph resolution
+    obsLine = line*(1+z)
+    if obsLine < splice:
+        dL = obsLine/resO[0]
+    else:
+        dL = obsLine/resO[1]
+    return dL
+
+
+# --------------------------------------------------- #
+# ---------------- comoving_distance ---------------- #
+# --------------------------------------------------- #
+# Function to calculate the comoving distance at a    #
+# given redshift. Written by Harry Hobson.            #
+# --------------------------------------------------- #
+def comoving_distance(z):
+    # returns the comoving distance in Mpc
+    # c in km/s
+    c = 299792.458
+    # H0 in km/s/Mpc
+    H0 = 70.0
+
+    f_E = lambda x: 1.0 / np.sqrt(0.3 * (1 + x) ** 3 + 0.7)
+    d_C = c / H0 * fixed_quad(f_E, 0.0, z, n=500)[0]
+
+    return d_C
+
+
+# --------------------------------------------------- #
+# ------------------- luminosity -------------------- #
+# --------------------------------------------------- #
+# Calculates the lambda L_lambda luminosity for the   #
+# specified wavelength and gives uncertainty via      #
+# bootstrapping.  If the luminosity is not present in #
+# the spectrum return nan.                            #
+# --------------------------------------------------- #
+def luminosity(wavelength, flux, variance, z, lum, strapNum, scale):
+    # Check if the luminosity windows used (lum +/- 10 A in observed frame) are present in the spectrum.  If not return
+    # nan for the luminosity
+    if wavelength[0] < lum - 10 and lum + 10 < wavelength[-1]:
+        lumBin = findBin(lum, wavelength)
+
+        # calculate the mean flux around the specified luminosity
+        fluxV = np.nanmean(flux[lumBin-2:lumBin+2]) * scale
+
+        # calculate the range of fluxes based on bootstrapping
+        flux_std = Lum_uncertainty(wavelength, flux, variance, lum, strapNum, scale)
+
+        # scale by luminosity - we want lambda L_lambda
+        fluxV = fluxV*lum
+        flux_std = flux_std*lum
+
+        # flux should be in erg/s/cm^2 the above statement gets rid of the angstroms
+        d_C = comoving_distance(z)
+        d_L = (1.0 + z) * d_C
+
+        # convert d_L from Mpc to cm
+        d_L *= 3.0857E24
+
+        # scale factor used for uncertainty propogation
+        scalefact = 4. * np.pi * d_L ** 2
+        L = fluxV * scalefact
+        L_std = flux_std * scalefact
+
+        # calculate log Luminosity and error
+        lgL = np.log10(L)
+        err = lgL- np.log10(L-L_std)
+    else:
+        lgL = np.nan
+        err = np.nan
+    return lgL, err
+
+
+# --------------------------------------------------- #
+# ---------------- Lum_uncertainty ------------------ #
+# --------------------------------------------------- #
+# Calculates the uncertainty due to flux resampling   #
+# and shifting luminosity window.                     #
+# --------------------------------------------------- #
+def Lum_uncertainty(wavelength, flux, variance, lum, strapNum, scale):
+    # Performs bootstrap resampling in the range of potentially clean continuum to determine
+    # 10 Angstroms on either size of luminosity
+    nBins = len(wavelength)
+    winLim = [findBin(lum-10, wavelength), findBin(lum+10, wavelength)]
+
+    # vector of wavelengths within winLim spaced by 1 Angstrom
+    winVect = np.arange(winLim[0], winLim[1]+1, 1)
+
+    # Array of random continuum window starting points
+    randVect = len(winVect)*np.random.rand(strapNum)
+    randVect = randVect.astype(int)
+
+    fluxes = np.zeros(strapNum)
+
+    # For each iteration do flux resampling and calculate the line flux and shift window slightly
+    for i in range(strapNum):
+        varC = np.copy(variance)
+        fluxC = np.zeros(nBins)
+        for w in range(nBins):
+            err = varC[w] ** 0.5
+            fluxC[w] = np.random.normal(flux[w], err)
+
+        fluxes[i] = np.nanmean(fluxC[winVect[randVect[i]] - 2:winVect[randVect[i]] + 2]) * scale
+
+    return np.nanstd(fluxes)
+
+
+# --------------------------------------------------- #
+# -------------------- RL_CIV ----------------------- #
+# --------------------------------------------------- #
+# Radius Luminosity using CIV line and L1350 from     #
+# Hoormann et al 2019.  L and L_std are log_10.       #
+# --------------------------------------------------- #
+def RL_CIV(L, L_std):
+    # From Hoormann et al 2019 using L1350
+    lag = pow(10, 0.81 + 0.47 * (L - 44))
+    lag_err_p = abs(pow(10, (0.81 + 0.09) + (0.47 + 0.03) * ((L + L_std) - 44)) - lag)
+    lag_err_m = abs(pow(10, (0.81 - 0.09) + (0.47 - 0.03) * ((L - L_std) - 44)) - lag)
+
+    return lag, lag_err_p, lag_err_m
+
+
+# --------------------------------------------------- #
+# -------------------- RL_MgII ---------------------- #
+# --------------------------------------------------- #
+# Radius Luminosity using MgII line and L3000 from    #
+# Trakhenbrot & Netzer 2012 best fit BCES method.     #
+# L and L_std are log_10.                             #
+# --------------------------------------------------- #
+def RL_MgII(L, L_std):
+    lag = pow(10, 1.34 + 0.615 * (L - 44))
+    lag_err_p = abs(pow(10, (1.34 + 0.019) + (0.615 + 0.014) * ((L + L_std) - 44)) - lag)
+    lag_err_m = abs(pow(10, (1.34 - 0.019) + (0.615 - 0.014) * ((L - L_std) - 44)) - lag)
+
+    return lag, lag_err_p, lag_err_m
+
+
+# --------------------------------------------------- #
+# -------------------- RL_Hbeta --------------------- #
+# --------------------------------------------------- #
+# Radius Luminosity using Hbeta line and L5100 from   #
+# Bentz et al 2013.  L and L_std are log_10.          #
+# --------------------------------------------------- #
+def RL_Hbeta(L, L_std):
+    lag = pow(10, 1.527 + 0.533 * (L - 44))
+    lag_err_p = abs(pow(10, (1.527 + 0.031) + (0.533 + 0.035) * ((L + L_std) - 44)) - lag)
+    lag_err_m = abs(pow(10, (1.527 - 0.031) + (0.533 - 0.033) * ((L - L_std) - 44)) - lag)
+
+    return lag, lag_err_p, lag_err_m
+
+
+# --------------------------------------------------- #
+# ------------------ blackHoleMass ------------------ #
+# --------------------------------------------------- #
+# Given a lag and velocity calculate the black hole   #
+# mass.  Given in units of 10^9 Solar Masses.         #
+# --------------------------------------------------- #
+def blackHoleMass(lag, lErrMin, lErrMax, velocity, vErr):
+    # convert everything to cgs
+    G = 6.67*10**-11
+    c = 2.998*10**8
+    Msun = 1.989*10**30
+    lag = lag*86400
+    lErrMin = lErrMin*86400
+    lErrMax = lErrMax*86400
+    velocity = velocity*1000
+    vErr = vErr*1000
+
+    # Define f factor
+    f = 4.47
+    ferr = 1.25  #Woo et al 2014
+
+    # Calculate Mass
+    mass = f*(pow(velocity, 2)*c*lag/G)/Msun/10**9
+
+    sigmaMin = mass*pow((ferr/f)**2 + (2*vErr/velocity)**2 + (lErrMin/lag)**2 ,0.5)
+
+    sigmaMax = mass*pow((ferr/f)**2 + (2*vErr/velocity)**2 + (lErrMax/lag)**2 ,0.5)
+
+    return mass, sigmaMin, sigmaMax

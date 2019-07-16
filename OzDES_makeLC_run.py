@@ -16,8 +16,6 @@
 # ---------------------------------------------------------- #
 
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 import OzDES_makeLC_calc as ozcalc
 
 
@@ -48,13 +46,14 @@ outLoc = "output/"
 
 # Flags to specify what you want the code to do
 makeFig = True  # make/save figures for each AGN including coadd spectrum and light curves
-makeFigEpoch = True  # make/save figures to illustrate spectrum for each epoch
-makePhotoLC = False  # make/save photometric lightcurves
-makeLineLC = True  # make/save line lightcurves
+makeFigEpoch = False  # make/save figures to illustrate spectrum for each epoch
+convertPhotoLC = False  # convert/save photometric lightcurves converting from magnitudes to flux
+makePhotoLC = False  # make light curves by applying photometric filters to spectral data
+makeLineLC = False  # make/save line lightcurves
 calcWidth = True  # calculate emission line widths
 calcBH = True  # calculate the black hole mass from R-L relationship
 
-# Define the emission lines you want to study
+# Define the emission lines you want to study (makeLineLC = True)
 lineName = np.array(['CIV', 'MgII', 'Hbeta', 'Halpha'])  # line names
 lineLoc = np.array([1549, 2798, 4861, 6563])  # rest frame line location in Angstroms
 lumLoc = np.array([1350, 3000, 5100, 5100])  # the rest frame wavelengths that correspond to the luminosities used for
@@ -73,9 +72,17 @@ contWinMax = {'CIV': [1780, 1790], 'MgII': [3007, 3027], 'Hbeta': [5100, 5130], 
 contWinBSMin = {'CIV': [1435, 1480], 'MgII': [2180, 2240], 'Hbeta': [4700, 4800], 'Halpha': [6120, 6220]}
 contWinBSMax = {'CIV': [1695, 1820], 'MgII': [2987, 3057], 'Hbeta': [5080, 5180], 'Halpha': [6800, 6900]}
 
-# Photometric bands to be considered
+# Photometric bands to be considered when converting photometric light curves (convertPhotoLC = True)
 bandName = np.array(['g', 'r', 'i'])  # photometric band names, same band names used in the photometric data file
 bandPivot = np.array([4812, 6434, 7815])  # pivot wavelength for each band
+
+# If you want to make a lightcurve using photometric filters from spectral data define the bands and the transmission
+# functions you want to use (makePhotoLC == True).  I am not going to check here, make sure the bands overlap yourself!
+# You need bandName and bandPivot as defined above to match these filters.  The transmission function for each of the
+# photometric filters in a two column format: wavelength (nm) and transmission fraction (range 0-1)
+filters = {'g': '../OzDES_Pipeline/RMPipeline/input/DES_g_y3a1.dat',
+           'r': '../OzDES_Pipeline/RMPipeline/input/DES_r_y3a1.dat',
+           'i': '../OzDES_Pipeline/RMPipeline/input/DES_i_y3a1.dat'}
 
 # The OzDES fluxes are on the order of 10^-16 ergs/s/cm^2/A.  To make it prettier to plot define a constant to scale
 # the numbers by
@@ -88,15 +95,16 @@ strapNum = 100
 for source in sourceStats:
 
     # Read in the spectral data if it will be needed later
-    if True in [makeLineLC, calcWidth, calcBH]:
+    if True in [makeLineLC, makePhotoLC, calcWidth, calcBH]:
         specName = spectraBase + source + spectraEnd
         spectra = ozcalc.SpectrumCoadd(specName)
-
         # name some convenience variables.  If you needed to edit the SpectrumCoadd class to handle your spectroscopic
         # data format make sure the following data is readily available.  The fluxes/variances are scaled
         wavelength = spectra.wavelength
         origFluxes = spectra.flux/scale
         origVariances = spectra.variance/pow(scale, 2)
+        origFluxCoadd = spectra.fluxCoadd/scale
+        origVarCoadd = spectra.varianceCoadd/pow(scale, 2)
         z = spectra.redshift
         dates = spectra.dates
         numEpochs = spectra.numEpochs
@@ -105,15 +113,34 @@ for source in sourceStats:
         # decide which emission lines are available in the spectrum
         availLines = ozcalc.findLines(wavelength, z, lineName, contWinBSMin, contWinBSMax)
 
+    # Make the emission line light curves for all available emission lines
     if makeLineLC == True:
         ozcalc.lineLC(dates, lineName, availLines, lineInt, contWinMin, contWinMax, contWinBSMin, contWinBSMax,
-                      wavelength, origFluxes, origVariances, numEpochs, scale, z, strapNum, outLoc, source, makeFig,
-                      makeFigEpoch)
+                      wavelength, origFluxes, origVariances, origFluxCoadd, numEpochs, scale, z, strapNum, outLoc,
+                      source, makeFig, makeFigEpoch)
 
-
-    # make the photometric light curves
-    if makePhotoLC == True:
+    # Convert photometric lightcurves from magnitudes to flux and save as separate light curves
+    if convertPhotoLC == True:
         # Define photometric filename
         photoName = photoBase + source + photoEnd
-        ozcalc.photoLC(photoName, source, bandName, bandPivot, scale, makeFig, outLoc)
+        ozcalc.convertPhotoLC(photoName, source, bandName, bandPivot, scale, makeFig, outLoc)
+
+    # Make the light curves for a specified photometric filter given a series of spectra
+    if makePhotoLC == True:
+        ozcalc.makePhotoLC(dates, bandName, bandPivot, filters, wavelength, origFluxes, origVariances, numEpochs, scale,
+                           outLoc, source, makeFig)
+
+    # Now we will calculate the emission line width, while we are at it we will calculate the black hole mass if
+    # possible.  Here I will just use the R-L relationships.  However, you could use these light curves to calculate
+    # lags (using PyCCF, Javelin, etc) and read those lags in here for each line.  That part is up to you!  I will
+    # calculate FWHM and velocity dispersion for the mean and RMS spectra.  It also corrects for the resolution of the
+    # spectrograph assuming the red/blue arms of AAOmega.  If you are using a different setup change the resolutions
+    # and splice locations in the findRes function.  If you want to use any other emission lines besides Hbeta, MgII,
+    # and CIV you will need to add the R-L relationships
+    if calcWidth == True:
+        wave = wavelength/(1+z)
+        ozcalc.calcWidth(wavelength, lineName, lineLoc, availLines, lineInt, lumLoc, contWinMin, contWinMax,
+                         contWinBSMin, contWinBSMax, origFluxes, origVariances, origFluxCoadd, origVarCoadd, z,
+                         strapNum, scale, outLoc, source, makeFig, calcBH)
+
 
