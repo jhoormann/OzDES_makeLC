@@ -47,6 +47,25 @@ astropy==3.0.4
 scipy==1.3.0
 
 # Input Data
+You need to provide a file with a list of IDs for each source to be
+analyzed.  It is assumed to be a single column with no filename.
+
+Running convertPhotoLC requires a data table for each source (named
+photoBase + ID + photoEnd where ID is the number listed in
+the above ID list file as specified in OzDES_makeLC_run.py)
+with four labeled columns: MJD, MAG, MAGERR, BAND.
+
+Running makePhotoLC, makeLineLC, calcWidth, and calcBH required
+calibrated spectroscopic data (spectraBase + ID + spectraEnd).  This
+data is assumed to be of the form obtained after running
+[OzDES_calibSpec](https://github.com/jhoormann/OzDES_calibSpec).  If
+your data is in another form modify the SpectrumCoadd class defined in
+OzDES_makeLC_calc.py to handle your data.
+
+If you choose to run makePhotoLC you will need to provide the
+photometric transmission function for the bands you want to calculate.
+Provide the transmission function for each of the filters in a two
+column format: wavelength (nm) and transmission fraction (range 0-1).
 
 # Output Data
 
