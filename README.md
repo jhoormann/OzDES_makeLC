@@ -67,9 +67,47 @@ photometric transmission function for the bands you want to calculate.
 Provide the transmission function for each of the filters in a two
 column format: wavelength (nm) and transmission fraction (range 0-1).
 
+The specifics for the emission lines/photometric bands to be analyzed
+along with windows to use for continuum subtraction are all defined at
+the top of OzDES_makeLC_run.py.
+
 # Output Data
 The output data is saved to the directory specified by the outLoc
 variable.
+
+ * convertPhotoLC: The photometric fluxes are saved individually for
+ each band in the file named outLoc + source + _ + bandName + .txt.
+ There are three columns: date, flux, error.  If makeFig = True the
+ light curves for each band are saved together on one figure called
+ outLoc + source + _photo.png.
+
+ * makePhotoLC: The calculated fluxes for the specified bands are saved
+ individually for  each band in the file named
+ outLoc + source + \_calc\_ + bandName + .txt.  There are three columns:
+ date, flux, error.  If makeFig = True the light curves for each
+ band are saved together on one figure called
+ outLoc + source + _makePhoto.png.
+
+ * makeLineLC: The calculated fluxes for each available emission line
+ are saved individually for  each band in the file named
+ outLoc + source + _ + line + .txt.  There are three columns:
+ date, flux, error.  If makeFig = True the light curves for each
+ line are saved together on one figure called
+outLoc + source + _spec.png. If makeFigEpoch = True the spectrum
+before/after continuum subtraction with the line/continuum windows
+indicated are saved for each spectrum as
+outLoc + source\_lineName\_epoch\_# + .png.
+
+ * calcWidth: The line width measurements are saved in a text file named
+ outLoc + source + \_vel\_and\_mass.txt.  The columns are
+ Line Type Measure Vel Vel_Err Mass Lag Lag_Err_Min Lag_Err_Max
+ Mass_Err_Min Mass_Err_Max.  Type can be Mean/RMS and Measure is
+ FWHM/Velocity Dispersion.
+
+ * calcBH:  If this flag is selected the black hole mass using the R-L
+ relationship is saved in the same table.  If it is not selected, or if
+ the necessary luminosity window is not present in the spectrum,
+ the mass and errors will be saved as np.nan.
 
 # Reference
 If you are using this code please cite the paper where this procedure

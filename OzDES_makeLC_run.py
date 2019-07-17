@@ -85,7 +85,7 @@ filters = {'g': '../OzDES_Pipeline/RMPipeline/input/DES_g_y3a1.dat',
            'i': '../OzDES_Pipeline/RMPipeline/input/DES_i_y3a1.dat'}
 
 # The OzDES fluxes are on the order of 10^-16 ergs/s/cm^2/A.  To make it prettier to plot define a constant to scale
-# the numbers by
+# the numbers by.  Outputted flux light curves are also scaled by this number.
 scale = pow(10, -17)
 
 # I use a bootstrap resampling technique to get uncertainties for continuum subtraction and line widths.  strapNum
