@@ -68,6 +68,8 @@ Provide the transmission function for each of the filters in a two
 column format: wavelength (nm) and transmission fraction (range 0-1).
 
 # Output Data
+The output data is saved to the directory specified by the outLoc
+variable.
 
 # Reference
 If you are using this code please cite the paper where this procedure
