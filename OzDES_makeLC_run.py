@@ -45,7 +45,7 @@ photoEnd = "_lc.dat"
 outLoc = "output/"
 
 # Flags to specify what you want the code to do
-makeFig = True  # make/save figures for each AGN including coadd spectrum and light curves
+makeFig = True  # make/save figures for each AGN including coadd spectrum and light curves etc
 makeFigEpoch = False  # make/save figures to illustrate spectrum for each epoch
 convertPhotoLC = False  # convert/save photometric lightcurves converting from magnitudes to flux
 makePhotoLC = False  # make light curves by applying photometric filters to spectral data
