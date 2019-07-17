@@ -46,6 +46,9 @@ astropy==3.0.4
 
 scipy==1.3.0
 
+To execute run >> python OzDES_makeLC_run.py after changing any
+necessary flags at the top of the file.
+
 # Input Data
 You need to provide a file with a list of IDs for each source to be
 analyzed.  It is assumed to be a single column with no filename.
