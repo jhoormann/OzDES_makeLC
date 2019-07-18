@@ -93,7 +93,7 @@ scale = pow(10, -17)
 
 # I use a bootstrap resampling technique to get uncertainties for continuum subtraction and line widths.  strapNum
 # defines the number of resamplings to perform
-strapNum = 10
+strapNum = 100
 
 for source in sourceStats:
 
