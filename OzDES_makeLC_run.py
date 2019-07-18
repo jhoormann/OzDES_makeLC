@@ -24,6 +24,9 @@ import OzDES_makeLC_calc as ozcalc
 sourceStatsFilename = "input/names.txt"
 
 sourceStats = np.genfromtxt(sourceStatsFilename, 'U')
+if sourceStats.size == 1:
+    # Otherwise it gets mad if you only have 1 source name in the file you read in
+    sourceStats = np.array([sourceStats])
 nSources = len(sourceStats)  # number of sources to loop over
 
 # Define the pre/post necessary to get the spectroscopic data.  It assumes the data is named in the following
@@ -49,9 +52,9 @@ makeFig = True  # make/save figures for each AGN including coadd spectrum and li
 makeFigEpoch = False  # make/save figures to illustrate spectrum for each epoch
 convertPhotoLC = False  # convert/save photometric lightcurves converting from magnitudes to flux
 makePhotoLC = False  # make light curves by applying photometric filters to spectral data
-makeLineLC = False  # make/save line lightcurves
-calcWidth = True  # calculate emission line widths
-calcBH = True  # calculate the black hole mass from R-L relationship
+makeLineLC = True  # make/save line lightcurves
+calcWidth = False  # calculate emission line widths
+calcBH = False  # calculate the black hole mass from R-L relationship
 
 # Define the emission lines you want to study (makeLineLC = True)
 lineName = np.array(['CIV', 'MgII', 'Hbeta', 'Halpha'])  # line names
@@ -90,7 +93,7 @@ scale = pow(10, -17)
 
 # I use a bootstrap resampling technique to get uncertainties for continuum subtraction and line widths.  strapNum
 # defines the number of resamplings to perform
-strapNum = 100
+strapNum = 10
 
 for source in sourceStats:
 

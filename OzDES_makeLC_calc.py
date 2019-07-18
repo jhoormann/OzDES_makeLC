@@ -946,8 +946,11 @@ def lineLC(dates, lineName, availLines, lineInt, contWinMin, contWinMax, contWin
             outputLC(dates, lc_flux, total_error, line, outLoc, source)
 
             if makeFig == True:
-                # plot the light curve on the subplot defined above.
-                ax_spec[l].errorbar(dates, lc_flux, yerr=total_error, fmt='o', color='black')
+                # plot the light curve on the subplot defined above. First get the index for the axis associated with
+                # the line being analyzed.
+                lbin = lineAxis.index(line)
+
+                ax_spec[lbin].errorbar(dates, lc_flux, yerr=total_error, fmt='o', color='black')
 
                 # make a plot to show the continuum subtraction regions on the coadded spectrum
                 fig_coadd, ax_coadd = plot_share_x(1, source, "Wavelength ($\AA$)", ["Total Coadded Flux (" + str(scale)
