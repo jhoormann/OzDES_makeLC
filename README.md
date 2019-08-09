@@ -6,6 +6,13 @@ using [OzDES_getPhoto](https://github.com/jhoormann/OzDES_getPhoto) and
 the spectroscopic data calibrated using
 [OzDES_calibSpec](https://github.com/jhoormann/OzDES_calibSpec).
 
+If you want to see how your choice of line integration/continuum 
+subtraction windows effects the light curve check out 
+[visLC](https://github.com/jhoormann/visLC).  This is a widget that 
+I have written which will allow you to change these values and see 
+how the resulting light curve (calculated using this code) is 
+effected in real time. 
+
 ## Functionality
 The following flags, if set to true, will perform various aspects of the
 analysis.
