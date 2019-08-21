@@ -234,7 +234,7 @@ def plot_share_x(number, title, xlabel, ylabel, xlim=(0, 0), ylim=(0, 0), asize=
 # -------------------------------------------------- #
 def convertPhotoLC(photoName, source, bandName, bandPivot, scale, makeFig, outLoc):
     # Read in the photometric data
-    photo = pd.read_table(photoName, delim_whitespace=True)
+    photo = pd.read_csv(photoName, delim_whitespace=True)
 
     if makeFig == True:
         # Define figure and axis for light curves of all bands
